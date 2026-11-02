@@ -1,0 +1,11 @@
+.evidence-row {
+  margin: 14px 0;
+  padding: 12px 14px;
+  border: 1px solid #edf1f6;
+  border-radius: 6px;
+}
+.schedule-row {
+  align-items: end;
+  border-top: 1px solid #edf1f6;
+  padding-top: 10px;
+}

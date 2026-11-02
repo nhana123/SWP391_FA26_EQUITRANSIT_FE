@@ -1,0 +1,128 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter } from 'react-router-dom';
+import { BookingServices } from './BookingServices';
+import { bookingApi } from './api';
+import { disclosureSchema, toPreferences, type Disclosure } from './contracts';
+import { testDisclosure, testOrder } from './testing';
+import { queryClient } from '../../shared/api/query';
+import { startSession } from '../../shared/api/session';
+
+vi.mock('./api', () => ({
+  bookingApi: { get: vi.fn(), confirm: vi.fn(), preview: vi.fn(() => new Promise(() => {})) },
+}));
+vi.mock('./rates-api', () => ({ ratesApi: { get: vi.fn().mockResolvedValue([]) } }));
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  queryClient.clear();
+  startSession({ accessToken: 'test-only', tokenType: 'Bearer', expiresIn: 60, role: 'CUSTOMER' });
+});
+export function mountBooking(disclosure: Disclosure = testDisclosure(), order = testOrder()) {
+  vi.mocked(bookingApi.get).mockResolvedValue(disclosure);
+  const onSaved = vi.fn();
+  render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter>
+        <BookingServices order={order} preferences={order.draft.services} onSaved={onSaved} />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+  return { onSaved, user: userEvent.setup() };
+}
+
+describe('booking shell (FE-20)', () => {
+  it('shows the seven sections in order with no horse picker', async () => {
+    mountBooking();
+    const buttons = await screen.findAllByRole('button', { expanded: false });
+    // Each section card is named by its title; the rest of the card is a preview.
+    expect(buttons.map((b) => b.getAttribute('aria-label'))).toEqual([
+      'Transportation',
+      'Available Air Stalls for Your Horse',
+      'Horse Care',
+      'Veterinary',
+      'Quarantine Packages',
+      'Insurance',
+      'Additional Charges',
+    ]);
+    expect(screen.queryByText(/next horse|select horse/i)).toBeNull();
+  });
+
+  it('does not pre-select an arrangement when the server value is null', async () => {
+    const { user } = mountBooking();
+    await user.click(await screen.findByRole('button', { name: 'Transportation' }));
+    expect(screen.getByLabelText('Arranged by EquiTransit')).not.toBeChecked();
+    expect(screen.getByLabelText('I will arrange my own provider')).not.toBeChecked();
+  });
+
+  it('keeps saved provider details readable and clears them only when choosing EquiTransit', async () => {
+    const { user } = mountBooking(
+      testDisclosure({
+        selected: {
+          roadArrangement: 'CUSTOMER',
+          roadProviderName: 'My trucks',
+          roadProviderContact: '+84901234567',
+        },
+      }),
+    );
+    await user.click(await screen.findByRole('button', { name: 'Transportation' }));
+    await user.click(screen.getByLabelText('I will arrange my own provider'));
+    expect(screen.getByText('My trucks')).toBeInTheDocument();
+    expect(screen.queryByRole('textbox')).toBeNull();
+    await user.click(screen.getByLabelText('Arranged by EquiTransit'));
+    expect(screen.queryByText('My trucks')).toBeNull();
+    await user.click(screen.getByLabelText('I will arrange my own provider'));
+    expect(screen.queryByText('My trucks')).toBeNull();
+    expect(screen.getByText('Your own provider')).toBeInTheDocument();
+  });
+
+  it('opening and closing sections never confirms and marks edits as unconfirmed', async () => {
+    const { user } = mountBooking();
+    const transport = await screen.findByRole('button', { name: 'Transportation' });
+    await user.click(transport);
+    await user.click(transport);
+    expect(bookingApi.confirm).not.toHaveBeenCalled();
+    expect(screen.queryByText(/You have unconfirmed changes/)).toBeNull();
+    await user.click(transport);
+    await user.click(screen.getByLabelText('Arranged by EquiTransit'));
+    expect(screen.getByText(/You have unconfirmed changes/)).toBeInTheDocument();
+    expect(bookingApi.confirm).not.toHaveBeenCalled();
+  });
+});
+
+describe('booking contract', () => {
+  it('keeps money as decimal strings and rejects numbers', () => {
+    expect(disclosureSchema.safeParse(testDisclosure()).success).toBe(true);
+    const numeric = { ...testDisclosure(), knownSubtotal: 550 };
+    expect(disclosureSchema.safeParse(numeric).success).toBe(false);
+  });
+
+  it('fills every preference field so a full replacement never drops one', () => {
+    const prefs = toPreferences({ airStall: 'WIDE' });
+    expect(prefs.airStall).toBe('WIDE');
+    expect(Object.values(prefs).filter((v) => v === null)).toHaveLength(14);
+  });
+});
+
+describe('service cards and popup', () => {
+  it('opens a section as a modal dialog; Esc and Done close it and keep the choice', async () => {
+    const { user } = mountBooking();
+    const card = await screen.findByRole('button', { name: 'Transportation' });
+    expect(card).toHaveAttribute('aria-haspopup', 'dialog');
+    await user.click(card);
+    const dialog = screen.getByRole('dialog', { name: 'Transportation' });
+    expect(dialog).toHaveAttribute('aria-modal', 'true');
+    await user.click(screen.getByLabelText('Arranged by EquiTransit'));
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    // The choice is kept as an unconfirmed edit.
+    expect(screen.getByText(/You have unconfirmed changes/)).toBeInTheDocument();
+    await user.click(card);
+    expect(screen.getByLabelText('Arranged by EquiTransit')).toBeChecked();
+    await user.click(screen.getByRole('button', { name: 'Done' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(bookingApi.confirm).not.toHaveBeenCalled();
+  });
+});

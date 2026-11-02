@@ -1,0 +1,32 @@
+.plan-legs {
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+.plan-leg {
+  margin-bottom: 1rem;
+}
+.plan-resources {
+  margin: 0.5rem 0;
+  padding-left: 1.25rem;
+}
+.plan-check {
+  grid-column: 1 / -1;
+}
+
+/* Coordinator case page: primary action into the Studio */
+.studio-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border-left: 4px solid var(--brand);
+}
+.studio-banner h2 {
+  margin: 0.2rem 0;
+}
+.studio-banner p {
+  margin: 0;
+  max-width: 46rem;
+}
